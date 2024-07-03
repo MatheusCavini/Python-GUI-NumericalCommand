@@ -5,37 +5,41 @@ from GParser import parseGCode
 import time
 import threading
 
-statesNum = 4
-eventsNum = 6
+statesNum = 5
+eventsNum = 7
 
 
-states = {"WAITING_TRAJ":0, 
-              "NOT_RUNNING":1, 
-              "RUNNING": 2,
-              "PAUSED": 3}
+states = {"WAITING_TRAJ":0,
+              "WAITING_ORIGIN":1, 
+              "NOT_RUNNING":2, 
+              "RUNNING": 3,
+              "PAUSED": 4}
 
 events = {"NO_EVENT":0,
-              "TRAJ_LOADED":1,
-              "START":2,
-              "PAUSE":3,
-              "RESUME":4,
-              "STOP":5}
+              "SENT_ORIGIN":1,
+              "TRAJ_LOADED":2,
+              "START":3,
+              "PAUSE":4,
+              "RESUME":5,
+              "STOP":6}
 
 transitionMatrix = [[j for i in range(eventsNum)] for j in range(statesNum)]
 
-transitionMatrix[states["WAITING_TRAJ"]][events["TRAJ_LOADED"]] = states["NOT_RUNNING"]
+transitionMatrix[states["WAITING_TRAJ"]][events["TRAJ_LOADED"]] = states["WAITING_ORIGIN"]
+transitionMatrix[states["WAITING_ORIGIN"]][events["SENT_ORIGIN"]] = states["NOT_RUNNING"]
 transitionMatrix[states["NOT_RUNNING"]][events["START"]] =  states["RUNNING"]
-transitionMatrix[states["RUNNING"]][events["STOP"]] = states["NOT_RUNNING"]
+transitionMatrix[states["RUNNING"]][events["STOP"]] = states["WAITING_ORIGIN"]
 transitionMatrix[states["RUNNING"]][events["PAUSE"]] = states["PAUSED"]
 transitionMatrix[states["PAUSED"]][events["RESUME"]] = states["RUNNING"]
 transitionMatrix[states["PAUSED"]][events["STOP"]] = states["NOT_RUNNING"]
 
 buttonStates = [[] for _ in range(statesNum)]
 
-buttonStates[states["WAITING_TRAJ"]]= [ctk.DISABLED, ctk.DISABLED, ctk.DISABLED, ctk.DISABLED, ctk.NORMAL]
-buttonStates[states["RUNNING"]]= [ctk.DISABLED, ctk.NORMAL, ctk.DISABLED, ctk.NORMAL, ctk.DISABLED]
-buttonStates[states["NOT_RUNNING"]]= [ctk.NORMAL, ctk.DISABLED, ctk.DISABLED, ctk.DISABLED, ctk.NORMAL]
-buttonStates[states["PAUSED"]]= [ctk.DISABLED, ctk.DISABLED, ctk.NORMAL, ctk.NORMAL, ctk.DISABLED]
+buttonStates[states["WAITING_TRAJ"]]= [ctk.DISABLED, ctk.DISABLED, ctk.DISABLED, ctk.DISABLED, ctk.DISABLED, ctk.NORMAL, ctk.NORMAL]
+buttonStates[states["WAITING_ORIGIN"]]= [ctk.DISABLED, ctk.DISABLED, ctk.DISABLED, ctk.DISABLED, ctk.NORMAL, ctk.NORMAL, ctk.NORMAL]
+buttonStates[states["RUNNING"]]= [ctk.DISABLED, ctk.NORMAL, ctk.DISABLED, ctk.NORMAL, ctk.DISABLED, ctk.DISABLED, ctk.DISABLED]
+buttonStates[states["NOT_RUNNING"]]= [ctk.NORMAL, ctk.DISABLED, ctk.DISABLED, ctk.DISABLED, ctk.NORMAL, ctk.NORMAL, ctk.NORMAL]
+buttonStates[states["PAUSED"]]= [ctk.DISABLED, ctk.DISABLED, ctk.NORMAL, ctk.NORMAL, ctk.DISABLED, ctk.DISABLED, ctk.DISABLED]
 
 global state
 global ser
@@ -64,6 +68,9 @@ def processResponse(response):
         linhaAtual = 0
         linha_var.set("Linha atual: " + str(linhaAtual))
         textbox.tag_remove("highlight", "0.0", "end")
+    elif(response == b':010602040112\r\n\r'):
+        print("Perna enviada para a origem da trajetória")
+        event = events["SENT_ORIGIN"]
     elif(response[0:7] == b':010301'):
         linhaAtual = int(response[7:9].decode(),16)
         linha_var.set("Linha atual: " + str(linhaAtual+1))
@@ -82,7 +89,10 @@ def processResponse(response):
     pause_button.configure(state=buttons[1])
     resume_button.configure(state=buttons[2])
     stop_button.configure(state=buttons[3])
-    file_button.configure(state=buttons[4])
+    origin_button.configure(state=buttons[4])
+    file_button.configure(state=buttons[5])
+    params_button.configure(state=buttons[6])
+
 
 def calculate_lrc(data):
     lrc = 0
@@ -147,6 +157,7 @@ def send_trajectory():
     message += b'\x0D\x0A'
     ser.write(message)
     print(message)
+
     
     # Optionally, read the response from the device (if needed)
     time.sleep(3)
@@ -163,6 +174,31 @@ def send_trajectory():
             lineNumber+=1
         textbox.tag_remove("highlight", "0.0", "end")
 
+def send_params():
+    global ser
+    # Send the data
+    message = b':010806'
+    message += ("{:04.1f}".format(float(kpA.get("0.0", "end")))).encode()
+    message += ("{:04.1f}".format(float(kiA.get("0.0", "end")))).encode()
+    message += ("{:04.1f}".format(float(kdA.get("0.0", "end")))).encode()
+    message += ("{:04.1f}".format(float(kpB.get("0.0", "end")))).encode()
+    message += ("{:04.1f}".format(float(kiB.get("0.0", "end")))).encode()
+    message += ("{:04.1f}".format(float(kdB.get("0.0", "end")))).encode()
+    message += calculate_lrc(message).encode()
+    message += b'\x0D\x0A'
+    ser.write(message)
+    print(message)
+
+    
+    # Optionally, read the response from the device (if needed)
+    time.sleep(1)
+    response = ser.read(100)  # Adjust the number of bytes to read as needed
+
+    #processResponse(response)
+
+    if response:
+        print("Received response:", response)
+
             
             
 def request_currLine():
@@ -170,13 +206,9 @@ def request_currLine():
     global ser
     global linhaAtual
     global blockFlag
-   
 
-    ser.write(b':0103000379' + b'\x0D\x0A' )
-    
-    
-    # Optionally, read the response from the device (if needed)
     if(not blockFlag):
+        ser.write(b':0103000379' + b'\x0D\x0A' )
         response = ser.read(14)  # Adjust the number of bytes to read as needed
         processResponse(response)
         if response:
@@ -187,8 +219,9 @@ def request_currLine():
 
 # Initialize the CustomTkinter application
 app = ctk.CTk()
-app.geometry("500x500")
+app.geometry("800x500")
 app.title("COM7 Sender")
+ctk.set_appearance_mode("dark")
 
 
 
@@ -200,8 +233,12 @@ resume_button = ctk.CTkButton(app, text="CONTINUAR", command=lambda:send_command
 resume_button.grid(row=3, column=0, pady=10, padx=10)
 stop_button = ctk.CTkButton(app, text="PARAR", command=lambda:send_command(b':0106020176' + b'\x0D\x0A'))
 stop_button.grid(row=4, column=0, pady=10, padx=10)
+origin_button = ctk.CTkButton(app, text="ORIGEM", command=lambda:send_command(b':0106040174' + b'\x0D\x0A'))
+origin_button.grid(row=5, column=0, pady=10, padx=10)
 file_button = ctk.CTkButton(app, text="CARREGAR TRAJ.", command=send_trajectory)
-file_button.grid(row=5, column=0, pady=10, padx=10)
+file_button.grid(row=6, column=0, pady=10, padx=10)
+params_button = ctk.CTkButton(app, text="ENVIAR PARÂMETROS", command=send_params)
+params_button.grid(row=5, column=2,columnspan=3, pady=10, padx=10)
 
 buttons =  buttonStates[state]
 
@@ -209,7 +246,9 @@ start_button.configure(state=buttons[0])
 pause_button.configure(state=buttons[1])
 resume_button.configure(state=buttons[2])
 stop_button.configure(state=buttons[3])
-file_button.configure(state=buttons[4])
+origin_button.configure(state=buttons[4])
+file_button.configure(state=buttons[5])
+params_button.configure(state=buttons[6])
 
 # Create a StringVar to hold the label text
 linha_var = ctk.StringVar(value="Linha atual: " + str(linhaAtual))
@@ -220,9 +259,48 @@ linha_label.grid(row=0, column=1, rowspan=1, pady=10, padx=10)
 
 textbox = ctk.CTkTextbox(app, width=300, height=400)
 textbox.grid(row=1, column = 1,rowspan=7, pady=10, padx=10)
+textbox.tag_config("highlight", background="#0077dd")
 
 
-textbox.tag_config("highlight", background="#00ccff")
+#Cria a seção de configuração dos parâmetros de controle
+params_label = ctk.CTkLabel(app, textvariable=ctk.StringVar(value="Parâmetros de controle das juntas"))
+params_label.grid(row=0, column=2, rowspan=1, columnspan=3, pady=10, padx=10)
+
+coxa_label = ctk.CTkLabel(app, textvariable=ctk.StringVar(value="Coxa"))
+coxa_label.grid(row=1, column=3, rowspan=1, columnspan=1, pady=10, padx=10)
+joelho_label = ctk.CTkLabel(app, textvariable=ctk.StringVar(value="Joelho"))
+joelho_label.grid(row=1, column=4, rowspan=1, columnspan=1, pady=10, padx=10)
+
+KP_label = ctk.CTkLabel(app, textvariable=ctk.StringVar(value="Kp"))
+KP_label.grid(row=2, column=2, rowspan=1, columnspan=1, pady=10, padx=10)
+KI_label = ctk.CTkLabel(app, textvariable=ctk.StringVar(value="Ki"))
+KI_label.grid(row=3, column=2, rowspan=1, columnspan=1, pady=10, padx=10)
+KD_label = ctk.CTkLabel(app, textvariable=ctk.StringVar(value="Kd"))
+KD_label.grid(row=4, column=2, rowspan=1, columnspan=1, pady=10, padx=10)
+
+kpA = ctk.CTkTextbox(app, width=50, height=20)
+kpA.grid(row=2, column = 3,rowspan=1, pady=10, padx=10)
+kiA = ctk.CTkTextbox(app, width=50, height=20)
+kiA.grid(row=3, column = 3,rowspan=1, pady=10, padx=10)
+kdA = ctk.CTkTextbox(app, width=50, height=20)
+kdA.grid(row=4, column = 3,rowspan=1, pady=10, padx=10)
+kpA.insert("0.0", "1.0")
+kiA.insert("0.0", "0.0")
+kdA.insert("0.0", "0.0")
+
+
+kpB = ctk.CTkTextbox(app, width=50, height=20)
+kpB.grid(row=2, column = 4,rowspan=1, pady=10, padx=10)
+kiB = ctk.CTkTextbox(app, width=50, height=20)
+kiB.grid(row=3, column = 4,rowspan=1, pady=10, padx=10)
+kdB = ctk.CTkTextbox(app, width=50, height=20)
+kdB.grid(row=4, column = 4,rowspan=1, pady=10, padx=10)
+kpB.insert("0.0", "1.0")
+kiB.insert("0.0", "0.0")
+kdB.insert("0.0", "0.0")
+
+
+
 
 
 def background_loop():

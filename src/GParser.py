@@ -31,7 +31,7 @@ class WalkListener(GCodeListener):
 
 
 def parseGCode():
-    with open("./GCode-example") as file:
+    with open("./src/GCode-example") as file:
         data = f'{file.read()}'
     lexer = GCodeLexer(InputStream(data))
     stream = CommonTokenStream(lexer)
