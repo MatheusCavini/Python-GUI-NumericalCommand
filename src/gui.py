@@ -219,7 +219,7 @@ def request_currLine():
 
 # Initialize the CustomTkinter application
 app = ctk.CTk()
-app.geometry("800x500")
+app.geometry("720x500")
 app.title("COM7 Sender")
 ctk.set_appearance_mode("dark")
 
