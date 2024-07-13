@@ -5,6 +5,8 @@ from GParser import parseGCode
 import time
 import threading
 
+
+#Definição dos estados e eventos do sistema
 statesNum = 5
 eventsNum = 7
 
@@ -23,6 +25,8 @@ events = {"NO_EVENT":0,
               "RESUME":5,
               "STOP":6}
 
+
+#Criação da matriz de transição da máquina de estados
 transitionMatrix = [[j for i in range(eventsNum)] for j in range(statesNum)]
 
 transitionMatrix[states["WAITING_TRAJ"]][events["TRAJ_LOADED"]] = states["WAITING_ORIGIN"]
@@ -33,6 +37,7 @@ transitionMatrix[states["RUNNING"]][events["PAUSE"]] = states["PAUSED"]
 transitionMatrix[states["PAUSED"]][events["RESUME"]] = states["RUNNING"]
 transitionMatrix[states["PAUSED"]][events["STOP"]] = states["NOT_RUNNING"]
 
+#Habilitação dos botões para cada estado
 buttonStates = [[] for _ in range(statesNum)]
 
 buttonStates[states["WAITING_TRAJ"]]= [ctk.DISABLED, ctk.DISABLED, ctk.DISABLED, ctk.DISABLED, ctk.DISABLED, ctk.NORMAL, ctk.NORMAL]
@@ -49,6 +54,8 @@ blockFlag = False
 global linhaAtual
 linhaAtual = 0
 
+
+#Função de processamento das respostas seriais: gera eventos, realiza a transição de estados e altera a interface
 def processResponse(response):
     global state
     global linhaAtual
@@ -85,6 +92,7 @@ def processResponse(response):
 
     buttons =  buttonStates[state]
 
+    #Atualização dos botões
     start_button.configure(state=buttons[0])
     pause_button.configure(state=buttons[1])
     resume_button.configure(state=buttons[2])
@@ -93,17 +101,18 @@ def processResponse(response):
     file_button.configure(state=buttons[5])
     params_button.configure(state=buttons[6])
 
-
+#Cálculo do LRC da comunicação MODBUS
 def calculate_lrc(data):
     lrc = 0
     for byte in data:
-        lrc = (lrc + byte) & 0xFF  # Sum the bytes and keep only the least significant byte
+        lrc = (lrc + byte) & 0xFF  
     lrc -= 0x3A
-    lrc = ((lrc ^ 0xFF) + 1) & 0xFF  # Two's complement
+    lrc = ((lrc ^ 0xFF) + 1) & 0xFF 
 
     lrc_string = hex(lrc)[2:]
     return lrc_string
 
+#Inicialização do canal serial
 def init_serial():
     global ser
     ports = list(serial.tools.list_ports.comports())
@@ -125,91 +134,82 @@ def init_serial():
     else:
         print("COM7 is not available")
 
+
+#Função de envio de comandos simples
 def send_command(command):
     global ser
     global blockFlag
 
-    
-    blockFlag =  True
-    ser.write(command)
+    blockFlag =  True #Bloqueia o serial enquanto envia
+    ser.write(command) #Envia o comando
     print("Sent to COM7 ->", command)
-    
-    # Optionally, read the response from the device (if needed)
-    response = ser.read(16)  # Adjust the number of bytes to read as needed
-    blockFlag =  False
-    processResponse(response)
+    response = ser.read(16)  #Lê a resposta
+    blockFlag =  False #Libera o serial
+    processResponse(response) #Processa a mensagem recebida
     if response:
         print("Received response:", response)
     
             
             
            
-
+#Envio da string de trajetória completa
 def send_trajectory():
+    #Utiliza o parseGCode para gerar a string de trajetória a ser enviada
     file, pointsNumber, trajectoryString = parseGCode()
     pointsNumber = "{:02X}".format(pointsNumber)
     global ser
-    # Send the data
-    message = b':0115' 
-    message += pointsNumber.encode()  
-    message += trajectoryString.encode()
-    message += calculate_lrc(message).encode()
-    message += b'\x0D\x0A'
-    ser.write(message)
-    print(message)
-
     
-    # Optionally, read the response from the device (if needed)
+    message = b':0115' #Enderço e código da função 21 = 0x15
+    message += pointsNumber.encode() #Número de pontos enviado 
+    message += trajectoryString.encode() #String de pontos que compõe a trajetória
+    message += calculate_lrc(message).encode() #LRC para a mensagem
+    message += b'\x0D\x0A' #Terminadores
+    ser.write(message) #Envia a mensagem
     time.sleep(3)
-    response = ser.read(100)  # Adjust the number of bytes to read as needed
-
-    processResponse(response)
+    response = ser.read(100)
+    processResponse(response) #Processa a resposta
 
     if response:
         print("Received response:", response)
-        textbox.delete("0.0", "end")  # delete all text
+        #Atualiza o texto no campo de código de G da interface
+        textbox.delete("0.0", "end")  
         lineNumber = 0
         for line in file:
             textbox.insert(f"{lineNumber}.0", line)
             lineNumber+=1
         textbox.tag_remove("highlight", "0.0", "end")
 
+#Envio dos parâmetros de controle
 def send_params():
     global ser
-    # Send the data
-    message = b':010806'
+    message = b':010806' #Endereço, código da função de número de parâmetros
+    #Inclusão dos 6 parâmetros de controle
     message += ("{:04.1f}".format(float(kpA.get("0.0", "end")))).encode()
     message += ("{:04.1f}".format(float(kiA.get("0.0", "end")))).encode()
     message += ("{:04.1f}".format(float(kdA.get("0.0", "end")))).encode()
     message += ("{:04.1f}".format(float(kpB.get("0.0", "end")))).encode()
     message += ("{:04.1f}".format(float(kiB.get("0.0", "end")))).encode()
     message += ("{:04.1f}".format(float(kdB.get("0.0", "end")))).encode()
-    message += calculate_lrc(message).encode()
-    message += b'\x0D\x0A'
+    message += calculate_lrc(message).encode() #Cálculo do LRC
+    message += b'\x0D\x0A'#Terminadores
     ser.write(message)
     print(message)
-
-    
-    # Optionally, read the response from the device (if needed)
     time.sleep(1)
-    response = ser.read(100)  # Adjust the number of bytes to read as needed
-
-    #processResponse(response)
-
+    response = ser.read(100)  
+    processResponse(response)
     if response:
         print("Received response:", response)
 
             
-            
+#Leitura da linha sendo executada          
 def request_currLine():
-    # Send the data
     global ser
     global linhaAtual
     global blockFlag
 
     if(not blockFlag):
-        ser.write(b':0103000379' + b'\x0D\x0A' )
-        response = ser.read(14)  # Adjust the number of bytes to read as needed
+        ser.write(b':0103000379' + b'\x0D\x0A' ) #Código para a função de ler REG_LINHA
+        response = ser.read(14)  
         processResponse(response)
         if response:
             print("Current line:", linhaAtual)
@@ -217,14 +217,13 @@ def request_currLine():
             
   
 
-# Initialize the CustomTkinter application
+#Inicialização da Interface Gráfica
 app = ctk.CTk()
 app.geometry("720x500")
 app.title("COM7 Sender")
 ctk.set_appearance_mode("dark")
 
-
-
+#Definição dos botões
 start_button = ctk.CTkButton(app, text="INICIAR", command=lambda:send_command(b':0106000178' + b'\x0D\x0A'))
 start_button.grid(row=1, column=0, pady=10, padx=10)
 pause_button = ctk.CTkButton(app, text="PAUSAR", command=lambda:send_command(b':0106010177' + b'\x0D\x0A'))
@@ -240,8 +239,8 @@ file_button.grid(row=6, column=0, pady=10, padx=10)
 params_button = ctk.CTkButton(app, text="ENVIAR PARÂMETROS", command=send_params)
 params_button.grid(row=5, column=2,columnspan=3, pady=10, padx=10)
 
+#Atribuição do estado inicial aos botões
 buttons =  buttonStates[state]
-
 start_button.configure(state=buttons[0])
 pause_button.configure(state=buttons[1])
 resume_button.configure(state=buttons[2])
@@ -250,13 +249,10 @@ origin_button.configure(state=buttons[4])
 file_button.configure(state=buttons[5])
 params_button.configure(state=buttons[6])
 
-# Create a StringVar to hold the label text
+#Criação dos campos de texto de exibição da linha atual e do código G
 linha_var = ctk.StringVar(value="Linha atual: " + str(linhaAtual))
-
-# Create a label to display the global variable value
 linha_label = ctk.CTkLabel(app, textvariable=linha_var)
 linha_label.grid(row=0, column=1, rowspan=1, pady=10, padx=10)
-
 textbox = ctk.CTkTextbox(app, width=300, height=400)
 textbox.grid(row=1, column = 1,rowspan=7, pady=10, padx=10)
 textbox.tag_config("highlight", background="#0077dd")
@@ -298,8 +294,6 @@ kdB.grid(row=4, column = 4,rowspan=1, pady=10, padx=10)
 kpB.insert("0.0", "1.0")
 kiB.insert("0.0", "0.0")
 kdB.insert("0.0", "0.0")
-
-
 
 
 
